@@ -5,7 +5,7 @@
 
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: #1F2937;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -67,4 +67,21 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
+}
+
+/* Custom utility classes */
+.bg-gray-850 {
+  background-color: #1F2937;
+}
+
+.bg-gray-750 {
+  background-color: #374151;
+}
+
+.border-accent {
+  border-color: #3B82F6;
+}
+
+.shadow-elevated {
+  box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
 }

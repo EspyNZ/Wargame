@@ -70,6 +70,13 @@ export default function App() {
     const { x, y } = toPixelCoord(q, r);
     const originX = canvasRef.current.width / 2;
     const originY = canvasRef.current.height / 2;
+    
+    // Check if this hex is selected
+    const col = String.fromCharCode(65 + q);
+    const row = -q - r + 1;
+    const hexCoord = `${col}${row}`;
+    const isSelected = selectedHex === hexCoord;
+    
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
       const angle = (Math.PI / 3) * i;
@@ -86,17 +93,16 @@ export default function App() {
     ctx.globalAlpha = opacity;
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = borderColor;
+    ctx.strokeStyle = isSelected ? '#3B82F6' : borderColor;
+    ctx.lineWidth = isSelected ? 3 : 1;
     ctx.stroke();
 
     // Draw coordinate text
-    const col = String.fromCharCode(65 + q);
-    const row = -q - r + 1;
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = isSelected ? '#3B82F6' : '#666';
     ctx.font = '10px Inter';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${col}${row}`, originX + x, originY + y);
+    ctx.fillText(hexCoord, originX + x, originY + y);
   };
 
   const drawUnit = (ctx, unit, playerSide) => {
