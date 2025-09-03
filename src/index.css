@@ -1,87 +1,534 @@
-:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Users,
+  Eye,
+  Swords,
+  Map,
+  PlusCircle,
+  XCircle,
+  ArrowRightCircle,
+  Settings,
+  Shield,
+  Heart,
+  Bolt,
+  Scroll,
+  Upload,
+} from 'lucide-react';
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #1F2937;
+// Use this for a consistent look. It assumes Tailwind is available in the environment.
+export default function App() {
+  const canvasRef = useRef(null);
+  const [viewMode, setViewMode] = useState('player'); // 'player' or 'umpire'
+  const [units, setUnits] = useState([]); // Start with an empty array to be populated by the user
+  const [terrain, setTerrain] = useState({}); // { 'A1': 'hill', 'B2': 'forest' }
+  const [ordersInput, setOrdersInput] = useState('');
+  const [selectedHex, setSelectedHex] = useState(null);
+  const [turnLog, setTurnLog] = useState([]);
+  const [showSetup, setShowSetup] = useState(true);
+  const [mapImage, setMapImage] = useState(null);
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
+  const hexSize = 30; // Radius of the hexagon
+  const boardSize = { width: 20, height: 15 };
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
+  // Hex grid utility functions
+  const toHexCoord = (x, y) => {
+    const q = (x * 2 / 3) / hexSize;
+    const r = (-x / 3 + Math.sqrt(3) / 3 * y) / hexSize;
+    const hex = hexRound(q, r);
+    const col = String.fromCharCode(65 + hex.q);
+    const row = hex.s + 1;
+    return `${col}${row}`;
+  };
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
+  const toPixelCoord = (q, r) => {
+    const x = hexSize * (3 / 2 * q);
+    const y = hexSize * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
+    return { x, y };
+  };
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
+  const hexRound = (q, r) => {
+    let s = -q - r;
+    let rx = Math.round(q);
+    let ry = Math.round(r);
+    let rz = Math.round(s);
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
+    const x_diff = Math.abs(rx - q);
+    const y_diff = Math.abs(ry - r);
+    const z_diff = Math.abs(rz - s);
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-}
+    if (x_diff > y_diff && x_diff > z_diff) {
+      rx = -ry - rz;
+    } else if (y_diff > z_diff) {
+      ry = -rx - rz;
+    } else {
+      rz = -rx - ry;
+    }
+    return { q: rx, r: ry, s: rz };
+  };
 
-/* Custom utility classes */
-.bg-gray-850 {
-  background-color: #1F2937;
-}
+  const drawHex = (ctx, q, r, color, opacity = 1, borderColor = '#ccc') => {
+    const { x, y } = toPixelCoord(q, r);
+    const originX = canvasRef.current.width / 2;
+    const originY = canvasRef.current.height / 2;
+    
+    // Check if this hex is selected
+    const col = String.fromCharCode(65 + q);
+    const row = -q - r + 1;
+    const hexCoord = `${col}${row}`;
+    const isSelected = selectedHex === hexCoord;
+    
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i;
+      const pointX = originX + x + hexSize * Math.cos(angle);
+      const pointY = originY + y + hexSize * Math.sin(angle);
+      if (i === 0) {
+        ctx.moveTo(pointX, pointY);
+      } else {
+        ctx.lineTo(pointX, pointY);
+      }
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = opacity;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = isSelected ? '#3B82F6' : borderColor;
+    ctx.lineWidth = isSelected ? 3 : 1;
+    ctx.stroke();
 
-.bg-gray-750 {
-  background-color: #374151;
-}
+    // Draw coordinate text
+    ctx.fillStyle = isSelected ? '#3B82F6' : '#666';
+    ctx.font = '10px Inter';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(hexCoord, originX + x, originY + y);
+  };
 
-.border-accent {
-  border-color: #3B82F6;
-}
+  const drawUnit = (ctx, unit, playerSide) => {
+    const col = unit.position.charCodeAt(0) - 65;
+    const row = parseInt(unit.position.substring(1), 10) - 1;
+    const r = -col - row;
+    const { x, y } = toPixelCoord(col, r);
+    const originX = canvasRef.current.width / 2;
+    const originY = canvasRef.current.height / 2;
+    const unitX = originX + x;
+    const unitY = originY + y;
 
-.shadow-elevated {
-  box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+    // Check visibility for player view
+    const isVisible = viewMode === 'umpire' || unit.side === playerSide || unit.spotted;
+    if (!isVisible) return;
+
+    // Draw unit circle
+    ctx.beginPath();
+    ctx.arc(unitX, unitY, hexSize / 2, 0, 2 * Math.PI);
+    ctx.fillStyle = unit.side === 'Blue' ? '#3b82f6' : '#ef4444';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Draw unit ID
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px Inter';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(unit.id, unitX, unitY);
+  };
+
+  const drawTerrain = (ctx) => {
+    const originX = canvasRef.current.width / 2;
+    const originY = canvasRef.current.height / 2;
+    for (const hexCoord in terrain) {
+      const col = hexCoord.charCodeAt(0) - 65;
+      const row = parseInt(hexCoord.substring(1), 10) - 1;
+      const r = -col - row;
+      const { x, y } = toPixelCoord(col, r);
+      let terrainColor = '';
+      switch (terrain[hexCoord]) {
+        case 'hill':
+          terrainColor = '#92400e';
+          break;
+        case 'forest':
+          terrainColor = '#166534';
+          break;
+        case 'river':
+          terrainColor = '#2563eb';
+          break;
+        case 'town':
+          terrainColor = '#737373';
+          break;
+        default:
+          terrainColor = '#dcfce7'; // Default plain terrain
+          break;
+      }
+      drawHex(ctx, col, r, terrainColor, 0.5, '#fff');
+    }
+  };
+
+  const calculateDistance = (pos1, pos2) => {
+    const q1 = pos1.charCodeAt(0) - 65;
+    const s1 = parseInt(pos1.substring(1), 10) - 1;
+    const r1 = -q1 - s1;
+    const q2 = pos2.charCodeAt(0) - 65;
+    const s2 = parseInt(pos2.substring(1), 10) - 1;
+    const r2 = -q2 - s2;
+    return (Math.abs(q1 - q2) + Math.abs(r1 - r2) + Math.abs(s1 - s2)) / 2;
+  };
+
+  const runSpottingChecks = () => {
+    const updatedUnits = units.map(unit => ({ ...unit, spotted: false }));
+    const playerSide = 'Blue'; // Hardcoded for this prototype
+    const spottingRange = 3;
+
+    updatedUnits.forEach(unit => {
+      if (unit.side === playerSide) {
+        // Find nearby enemy units
+        const enemies = updatedUnits.filter(e => e.side !== playerSide);
+        enemies.forEach(enemy => {
+          if (!enemy.spotted) {
+            const distance = calculateDistance(unit.position, enemy.position);
+            if (distance <= spottingRange) {
+              enemy.spotted = true;
+            }
+          }
+        });
+      }
+    });
+    setUnits(updatedUnits);
+    logEvent('Spotting checks completed. Enemy units have been revealed based on proximity.');
+  };
+
+  const resolveOrders = () => {
+    logEvent('Resolving player orders...');
+    const updatedUnits = units.map(unit => {
+      if (unit.orders) {
+        // A very simplified movement parser. "advance north to C5" -> moves unit to C5
+        const newPositionMatch = unit.orders.match(/to\s+([A-Z]\d+)/i);
+        if (newPositionMatch) {
+          const newPos = newPositionMatch[1].toUpperCase();
+          return { ...unit, position: newPos, orders: null };
+        }
+      }
+      return { ...unit, orders: null };
+    });
+    setUnits(updatedUnits);
+    logEvent('Units moved according to orders.');
+  };
+
+  const logEvent = (message) => {
+    setTurnLog(prev => [`Turn ${prev.length + 1}: ${message}`, ...prev]);
+  };
+
+  const handleTurnResolution = () => {
+    resolveOrders();
+    runSpottingChecks();
+    logEvent('Turn resolution complete. Check the map for updated positions.');
+  };
+
+  const handleCanvasClick = (event) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left - canvas.width / 2;
+    const y = event.clientY - rect.top - canvas.height / 2;
+
+    const q = (x * 2 / 3) / hexSize;
+    const r = (-x / 3 + Math.sqrt(3) / 3 * y) / hexSize;
+    const hex = hexRound(q, r);
+    const col = String.fromCharCode(65 + hex.q);
+    const row = -hex.q - hex.r + 1;
+    const hexCoord = `${col}${row}`;
+    setSelectedHex(hexCoord);
+  };
+
+  const handleAssignTerrain = (type) => {
+    if (selectedHex) {
+      setTerrain(prev => ({ ...prev, [selectedHex]: type }));
+    }
+  };
+
+  const handlePlaceUnit = () => {
+    if (selectedHex) {
+      const newUnit = {
+        id: `New Unit ${units.length + 1}`,
+        side: viewMode === 'umpire' ? 'Red' : 'Blue',
+        position: selectedHex,
+        strength: 500,
+        morale: 3,
+        cohesion: 'steady',
+        orders: null,
+      };
+      setUnits([...units, newUnit]);
+    }
+  };
+
+  const handleMapUpload = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const imageUrl = URL.createObjectURL(file);
+      setMapImage(imageUrl);
+    }
+  };
+
+  const handleUnitsUpload = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type === 'application/json') {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const newUnits = JSON.parse(e.target.result);
+          if (Array.isArray(newUnits)) {
+            setUnits(newUnits);
+            alert('Units loaded successfully!');
+          } else {
+            alert('Error: JSON file must contain an array of units.');
+          }
+        } catch (err) {
+          alert('Error parsing JSON file. Please check the file format.');
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      alert('Please upload a valid JSON file.');
+    }
+  };
+
+  // Canvas drawing effect
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth * 0.9;
+    canvas.height = window.innerHeight * 0.6;
+
+    const render = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const originX = canvas.width / 2;
+      const originY = canvas.height / 2;
+
+      // Draw map image if it exists
+      if (mapImage) {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          drawGameElements();
+        };
+        img.src = mapImage;
+      } else {
+        drawGameElements();
+      }
+
+      function drawGameElements() {
+        // Draw grid
+        for (let q = -boardSize.width / 2; q < boardSize.width / 2; q++) {
+          for (let r = -boardSize.height / 2; r < boardSize.height / 2; r++) {
+            drawHex(ctx, q, r, '#fff', 0.1, '#ccc');
+          }
+        }
+        // Draw terrain on top of grid
+        drawTerrain(ctx);
+        // Draw units
+        const playerSide = 'Blue';
+        units.forEach(unit => drawUnit(ctx, unit, playerSide));
+      }
+    };
+
+    render();
+    window.addEventListener('resize', render);
+    return () => window.removeEventListener('resize', render);
+  }, [units, terrain, viewMode, mapImage]);
+
+  return (
+    <div className="min-h-screen bg-gray-850 text-gray-100 font-sans p-4 flex flex-col items-center transition-all duration-300">
+      <div className="w-full max-w-7xl flex flex-col md:flex-row gap-6 mb-6">
+        {/* Game Title and Controls */}
+        <div className="flex-1 bg-gray-800 rounded-xl shadow-elevated p-6 space-y-6 border border-gray-700">
+          <h1 className="text-3xl font-bold text-center text-blue-400 tracking-wide">Kriegsspiel Web App</h1>
+          <div className="flex justify-center gap-3 p-4 bg-gray-750 rounded-xl">
+            <button
+              onClick={() => setShowSetup(true)}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl transition-all duration-300 font-medium ${
+                showSetup ? 'bg-purple-600 text-white ring-2 ring-purple-400 shadow-lg' : 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white'
+              }`}
+            >
+              <Settings size={16} /> Setup
+            </button>
+            <button
+              onClick={() => setViewMode('player')}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl transition-all duration-300 font-medium ${
+                viewMode === 'player' ? 'bg-blue-600 text-white ring-2 ring-blue-400 shadow-lg border-b-2 border-blue-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white'
+              }`}
+            >
+              <Users size={16} /> Player View
+            </button>
+            <button
+              onClick={() => setViewMode('umpire')}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl transition-all duration-300 font-medium ${
+                viewMode === 'umpire' ? 'bg-blue-600 text-white ring-2 ring-blue-400 shadow-lg border-b-2 border-blue-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white'
+              }`}
+            >
+              <Eye size={16} /> Umpire View
+            </button>
+            <button
+              onClick={handleTurnResolution}
+              className="flex items-center gap-2 p-3 rounded-xl bg-green-600 hover:bg-green-500 text-white transition-all duration-300"
+            >
+              <Swords size={16} /> Resolve Turn
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="w-full max-w-7xl flex flex-col lg:flex-row gap-4">
+        {showSetup ? (
+          <div className="flex-1 bg-gray-800 rounded-xl shadow-lg p-6 flex flex-col items-center justify-center space-y-8">
+            <h2 className="text-2xl font-bold text-blue-400">Battle Setup</h2>
+            <p className="text-gray-400">As the Umpire, upload your map and force list to begin the battle.</p>
+            
+            {/* Map Upload Section */}
+            <div className="bg-gray-700 rounded-xl p-6 w-full max-w-lg flex flex-col items-center space-y-4">
+              <h3 className="text-xl font-semibold">1. Upload Map</h3>
+              <p className="text-gray-300 text-sm text-center">Your custom map will be displayed as the background for the hex grid.</p>
+              <label htmlFor="map-upload" className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gray-600 hover:bg-gray-500 text-white transition-colors duration-300 cursor-pointer">
+                <Upload size={20} /> Select Map Image
+              </label>
+              <input
+                id="map-upload"
+                type="file"
+                accept="image/*"
+                onChange={handleMapUpload}
+                className="hidden"
+              />
+              {mapImage && <p className="text-sm text-green-400">Map uploaded successfully!</p>}
+            </div>
+
+            {/* Units Upload Section */}
+            <div className="bg-gray-700 rounded-xl p-6 w-full max-w-lg flex flex-col items-center space-y-4">
+              <h3 className="text-xl font-semibold">2. Upload Force List (JSON)</h3>
+              <p className="text-gray-300 text-sm text-center">Provide a JSON file with your unit data. <br />Example: <code className="bg-gray-800 px-2 py-1 rounded">[{`"id": "1st Blue Infantry", "side": "Blue", "position": "C4"`}]</code></p>
+              <label htmlFor="units-upload" className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gray-600 hover:bg-gray-500 text-white transition-colors duration-300 cursor-pointer">
+                <Upload size={20} /> Select Units JSON
+              </label>
+              <input
+                id="units-upload"
+                type="file"
+                accept=".json"
+                onChange={handleUnitsUpload}
+                className="hidden"
+              />
+              {units.length > 0 && <p className="text-sm text-green-400">{units.length} units loaded successfully!</p>}
+            </div>
+
+            <button
+              onClick={() => setShowSetup(false)}
+              className="px-8 py-4 bg-green-600 hover:bg-green-500 text-white text-lg font-bold rounded-xl transition-colors duration-300"
+            >
+              <Swords size={20} className="inline-block mr-2" /> Go to Battle
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Left Panel - Map & Player Input */}
+            <div className="flex-1 bg-gray-800 rounded-xl shadow-lg p-6 flex flex-col items-center">
+              <h2 className="text-xl font-semibold mb-4 text-center">Battle Map</h2>
+              <div className="bg-gray-700 rounded-xl w-full p-2">
+                <canvas ref={canvasRef} onClick={handleCanvasClick} className="w-full h-auto rounded-lg" />
+              </div>
+              {viewMode === 'umpire' && (
+                <div className="mt-4 w-full bg-gray-700 rounded-xl p-4 space-y-4">
+                  <h3 className="text-lg font-semibold text-center">Umpire Tools</h3>
+                  {selectedHex && (
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <p className="text-gray-300">Selected Hex: <span className="font-bold text-blue-400">{selectedHex}</span></p>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <button onClick={() => handleAssignTerrain('plain')} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-xl transition-colors duration-300">Set Plain</button>
+                        <button onClick={() => handleAssignTerrain('hill')} className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-xl transition-colors duration-300">Set Hill</button>
+                        <button onClick={() => handleAssignTerrain('forest')} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors duration-300">Set Forest</button>
+                        <button onClick={() => handleAssignTerrain('river')} className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl transition-colors duration-300">Set River</button>
+                        <button onClick={() => handleAssignTerrain('town')} className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-xl transition-colors duration-300">Set Town</button>
+                      </div>
+                      <button onClick={handlePlaceUnit} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors duration-300"><PlusCircle size={16} className="inline-block mr-2" />Place New Unit</button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {viewMode === 'player' && (
+                <div className="mt-4 w-full bg-gray-700 rounded-xl p-4 space-y-4">
+                  <h3 className="text-lg font-semibold text-center">Player Orders</h3>
+                  <p className="text-sm text-gray-400">
+                    Submit orders for your units. For example: "1st Blue Infantry advance to C5."
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ordersInput}
+                      onChange={(e) => setOrdersInput(e.target.value)}
+                      placeholder="Enter orders..."
+                      className="flex-1 p-3 rounded-xl bg-gray-900 text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors duration-300"
+                    />
+                    <button
+                      onClick={() => {
+                        // This is a simple prototype, so we'll apply the same order to all units for now.
+                        setUnits(units.map(u => ({ ...u, orders: ordersInput })));
+                        setOrdersInput('');
+                        logEvent('Orders received. Awaiting turn resolution.');
+                      }}
+                      className="p-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors duration-300"
+                    >
+                      <ArrowRightCircle size={20} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right Panel - Unit and Turn Log */}
+            <div className="flex-1 bg-gray-800 rounded-xl shadow-lg p-6 space-y-6">
+              <div className="bg-gray-700 rounded-xl p-4 space-y-2">
+                <h2 className="text-xl font-semibold text-center mb-2">Unit Status</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
+                  {units.map(unit => {
+                    const isVisible = viewMode === 'umpire' || unit.side === 'Blue' || unit.spotted;
+                    if (!isVisible) return null;
+                    return (
+                      <div key={unit.id} className="bg-gray-900 rounded-xl p-4 shadow-inner border border-gray-600">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className={`w-3 h-3 rounded-full ${unit.side === 'Blue' ? 'bg-blue-500' : 'bg-red-500'}`} />
+                          <h3 className="font-semibold text-lg">{unit.id}</h3>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm text-gray-400">
+                          <div className="flex items-center gap-1"><Map size={14} /> Pos: <span className="text-white">{unit.position}</span></div>
+                          <div className="flex items-center gap-1"><Shield size={14} /> Str: <span className="text-white">{unit.strength}</span></div>
+                          <div className="flex items-center gap-1"><Heart size={14} /> Morale: <span className="text-white">{unit.morale}</span></div>
+                          <div className="flex items-center gap-1"><Bolt size={14} /> Cohesion: <span className="text-white">{unit.cohesion}</span></div>
+                          <div className="flex items-center gap-1 col-span-2"><Scroll size={14} /> Orders: <span className="text-white truncate">{unit.orders || 'None'}</span></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="bg-gray-700 rounded-xl p-4 space-y-2">
+                <h2 className="text-xl font-semibold text-center mb-2">Turn Log</h2>
+                <div className="h-48 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-600">
+                  {turnLog.length === 0 ? (
+                    <p className="text-gray-500 text-center text-sm">No events yet.</p>
+                  ) : (
+                    <ul className="space-y-1 text-sm text-gray-300">
+                      {turnLog.map((log, index) => (
+                        <li key={index} className="border-b border-gray-600 last:border-b-0 pb-1 mb-1">{log}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
